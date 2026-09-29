@@ -1,0 +1,74 @@
+{
+  "horizon_s": 600,
+  "topology_step_s": 10,
+  "drain": true,
+  "cpu_load_weight": 1,
+  "bandwidth_load_weight": 1,
+  "constellation": {
+    "satellites": 20,
+    "planes": 4,
+    "altitude_km": 2000,
+    "inclination_deg": 90,
+    "phase_factor": 0,
+    "cpu_min": 400,
+    "cpu_max": 600,
+    "link_bandwidth_mhz": 200,
+    "earth_radius_km": 6371,
+    "earth_mu_km3_s2": 398600.4418,
+    "light_speed_km_s": 299000,
+    "enforce_line_of_sight": true,
+    "close_plane_seam": true,
+    "seed": 7
+  },
+  "requests": {
+    "arrival_rate_per_slot": 3,
+    "slot_duration_s": 10,
+    "mean_duration_s": 120,
+    "bandwidth_to_compute_ratio": 0.5,
+    "vnf_count_min": 3,
+    "vnf_count_max": 5,
+    "cpu_min": 50,
+    "cpu_max": 200,
+    "bandwidth_min_mhz": 20,
+    "bandwidth_max_mhz": 80,
+    "max_delay_s": 0.1,
+    "seed": 11
+  },
+  "mdp": {
+    "max_steps": 25,
+    "load_scale": 1000,
+    "delay_scale_s": 0.1,
+    "rewards": {
+      "theta1": 1000,
+      "theta2": 1,
+      "theta3": 0.01,
+      "theta4": 1000,
+      "theta5": 1,
+      "theta6": 1,
+      "alpha1": 10,
+      "alpha2": 20,
+      "beta0": 20,
+      "beta1": 5,
+      "gamma1": 1
+    }
+  },
+  "gat_features": {
+    "max_vnfs": 8,
+    "cpu_demand_scale": 200,
+    "bandwidth_demand_scale_mhz": 200,
+    "delay_scale_s": 0.1
+  },
+  "gat": {
+    "hidden_dim": 128,
+    "num_layers": 2,
+    "heads": 1,
+    "negative_slope": 0.2,
+    "dropout": 0
+  },
+  "agent": {
+    "hidden_dim1": 128,
+    "hidden_dim2": 64,
+    "discount": 0.9999,
+    "target_sync_interval": 10
+  }
+}
