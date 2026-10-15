@@ -35,11 +35,11 @@ def line_of_sight(a: Position, b: Position, radius: float) -> bool:
 
 @dataclass(frozen=True)
 class ConstellationConfig:
-    """預設 20 顆＝4 軌道×5 顆；可維持 2,000 km 高度的同軌鄰星通視。"""
-    satellites: int = 20
-    planes: int = 4
+    """預設 25 顆＝5 軌道×5 顆；名義四鄰居與實際通視連線分開。"""
+    satellites: int = 25
+    planes: int = 5
     altitude_km: float = 2000.0
-    inclination_deg: float = 90.0
+    inclination_deg: float = 85.0
     phase_factor: int = 0
     cpu_min: float = 400.0
     cpu_max: float = 600.0
@@ -91,6 +91,7 @@ class NetworkSnapshot:
     time_s: float
     satellites: Mapping[int, Satellite]
     links: Mapping[Edge, Link]
+    nominal_links: Mapping[Edge, Link] = field(default_factory=dict)
     _neighbors: Mapping[int, tuple[int, ...]] = field(init=False, repr=False)
 
     def __post_init__(self):
@@ -101,6 +102,7 @@ class NetworkSnapshot:
             adjacent[b].append(a)
         object.__setattr__(self, "satellites", MappingProxyType(satellites))
         object.__setattr__(self, "links", MappingProxyType(links))
+        object.__setattr__(self, "nominal_links", MappingProxyType(dict(self.nominal_links)))
         object.__setattr__(self, "_neighbors",
                            MappingProxyType({n: tuple(sorted(v)) for n, v in adjacent.items()}))
 
@@ -173,7 +175,7 @@ class LEOConstellation:
                 radius * sin(anomaly) * sin(inclination),
             )
             satellites[n] = Satellite(n, plane, slot, position, self.cpu[n])
-        links = {}
+        links, nominal = {}, {}
         disabled = {edge_key(*edge) for edge in disabled_links}
 
         def candidate(a, b):
@@ -188,30 +190,66 @@ class LEOConstellation:
 
         def add(a, b, d, kind):
             key = edge_key(a, b)
-            links[key] = Link(*key, d, d / cfg.light_speed_km_s, cfg.link_bandwidth_mhz, kind)
+            link = Link(*key, d, d / cfg.light_speed_km_s, cfg.link_bandwidth_mhz, kind)
+            nominal[key] = link
+            if candidate(a, b) is not None:
+                links[key] = link
 
         for plane in range(cfg.planes):
             for slot in range(count):
                 a, b = plane * count + slot, plane * count + (slot + 1) % count
-                d = candidate(a, b)
-                if d is not None:
-                    add(a, b, d, "intra")
+                add(a, b, distance(satellites[a].position_km, satellites[b].position_km), "intra")
         pairs = [(p, p + 1) for p in range(cfg.planes - 1)]
         if cfg.close_plane_seam:
             pairs.append((cfg.planes - 1, 0))
         for left, right in pairs:
-            possible = []
-            for a in range(left * count, (left + 1) * count):
-                for b in range(right * count, (right + 1) * count):
-                    d = candidate(a, b)
-                    if d is not None:
-                        possible.append((d, a, b))
-            # 按距離做一對一配對：每顆衛星向各鄰軌最多使用一個收發器。
-            # 論文未指定最近鄰衝突解法，此處採可重現的貪婪配對。
-            used_left, used_right = set(), set()
-            for d, a, b in sorted(possible):
-                if a not in used_left and b not in used_right:
-                    add(a, b, d, "inter")
-                    used_left.add(a)
-                    used_right.add(b)
-        return NetworkSnapshot(time_s, satellites, links)
+            a_ids = list(range(left * count, (left + 1) * count))
+            b_ids = list(range(right * count, (right + 1) * count))
+            costs = [[distance(satellites[a].position_km, satellites[b].position_km)
+                      for b in b_ids] for a in a_ids]
+            # 名義配對先決定，遮蔽或故障只移除邊，不另補邊湊度數。
+            for i, j in enumerate(minimum_distance_matching(costs)):
+                add(a_ids[i], b_ids[j], costs[i][j], "inter")
+        return NetworkSnapshot(time_s, satellites, links, nominal)
+
+
+def minimum_distance_matching(costs):
+    """Hungarian assignment: minimum total distance, deterministic ties, O(n^3).
+
+    Each satellite gets one counterpart in each adjacent plane; this is not
+    independent nearest-neighbor selection, which can violate reciprocity.
+    """
+    n = len(costs)
+    if not n or any(len(row) != n or any(not isfinite(x) or x < 0 for x in row) for row in costs):
+        raise ValueError("A finite nonnegative square cost matrix is required")
+    u, v, p, way = [0.] * (n+1), [0.] * (n+1), [0] * (n+1), [0] * (n+1)
+    for i in range(1, n+1):
+        p[0], j0 = i, 0
+        minv, used = [float('inf')] * (n+1), [False] * (n+1)
+        while True:
+            used[j0] = True
+            i0, delta, j1 = p[j0], float('inf'), 0
+            for j in range(1, n+1):
+                if not used[j]:
+                    cur = costs[i0-1][j-1] - u[i0] - v[j]
+                    if cur < minv[j]:
+                        minv[j], way[j] = cur, j0
+                    if minv[j] < delta:
+                        delta, j1 = minv[j], j
+            for j in range(n+1):
+                if used[j]:
+                    u[p[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+            if p[j0] == 0:
+                break
+        while j0:
+            j1 = way[j0]
+            p[j0] = p[j1]
+            j0 = j1
+    result = [0] * n
+    for j in range(1, n+1):
+        result[p[j]-1] = j-1
+    return result

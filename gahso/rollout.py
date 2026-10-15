@@ -30,7 +30,7 @@ def td_target(reward: float, next_value: Tensor, terminated: bool, discount: flo
 
 @dataclass(frozen=True)
 class Transition:
-    """保存真實 (s,a,r,s_next) 及學習需要的量；action=None 僅表示無鄰居的終止事件。"""
+    """保存真實轉移；action=None 表示無可行動作，reward 原值與 target 縮放單位分開。"""
     state: dict
     next_state: dict
     graph: GATInputs
@@ -104,7 +104,11 @@ def _collection_mode(agent: ActorCriticAgent, track_grad: bool):
 
 class RolloutCollector:
     """每個請求內不改動網路參數，完成後回傳完整軌跡；不自動 optimizer.step。"""
-    def __init__(self, env: SFCOrchestrationEnv, agent: ActorCriticAgent, *, seed: int = 11):
+    def __init__(self, env: SFCOrchestrationEnv, agent: ActorCriticAgent, *, seed: int = 11,
+                 reward_scale: float = 1.0):
+        if not isfinite(reward_scale) or reward_scale <= 0:
+            raise ValueError("reward_scale must be finite and positive")
+        self.reward_scale = reward_scale
         self.env = env
         self.agent = agent
         self.builder = GATFeatureBuilder(agent.actor.feature_config)
@@ -117,7 +121,7 @@ class RolloutCollector:
                 deterministic: bool = False, track_grad: bool = False) -> RequestRollout:
         """預設 start_request 保留背景資源；reset_network=True 才清空環境。
 
-        對無任何鄰居的狀態，明確記錄 action=None 的失敗終止，
+        對無任何可行動作的狀態，明確記錄 action=None 的失敗終止，
         不偽造動作，也不對全 -inf 的 logits 計算 softmax。
         """
         agent, env = self.agent, self.env
@@ -133,7 +137,7 @@ class RolloutCollector:
             while True:
                 graph = self.builder.build(state, device=reference.device, dtype=reference.dtype)
                 value = agent.critic(graph)
-                if bool(graph.action_mask.any()):
+                if bool(graph.feasible_action_mask.any()):
                     sample = agent.act(graph, deterministic=deterministic, generator=self.generator)
                     next_state, reward, terminated, truncated, info = env.step(sample.action)
                     action, node = sample.action, graph.node_ids[sample.action]
@@ -144,7 +148,7 @@ class RolloutCollector:
                 next_graph = self.builder.build(next_state, device=reference.device, dtype=reference.dtype)
                 # 成功或失敗終止都不 bootstrap；不用在全遮罩狀態再次呼叫 Actor。
                 next_value = value.detach().new_zeros(()) if terminated else agent.target_critic(next_graph)
-                target = td_target(reward, next_value, terminated, agent.config.discount)
+                target = td_target(reward / self.reward_scale, next_value, terminated, agent.config.discount)
                 # 原文式 (23) 是 V-target；常見 policy advantage 則採 target-V。
                 advantage = target - value.detach()
                 trajectory.append(Transition(

@@ -1,4 +1,0 @@
-# Optional GAT dependencies; tested on Python 3.14, Windows CPU.
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.14.0+cpu
-numpy==2.5.3

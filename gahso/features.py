@@ -124,8 +124,8 @@ class GATFeatureBuilder:
             if not path or path[0] != request["source"]:
                 raise ValueError("Request path must start at its source")
             vnfs = request["vnfs"]
-            if not 2 <= len(vnfs) <= cfg.max_vnfs:
-                raise ValueError(f"VNF count must be in [2, {cfg.max_vnfs}]; increase max_vnfs instead of truncating")
+            if not 3 <= len(vnfs) <= cfg.max_vnfs:
+                raise ValueError("VNF count must be in [3, 5]; requests are never truncated")
             demands = [v["cpu"] for v in vnfs]
             if any(not isfinite(v) or v <= 0 for v in demands):
                 raise ValueError("VNF CPU demands must be finite and positive")

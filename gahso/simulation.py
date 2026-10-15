@@ -7,6 +7,7 @@ from .baseline import shortest_delay_greedy
 from .mdp import MDPConfig
 from .gat_config import GATConfig, GATFeatureConfig
 from .agent_config import AgentConfig
+from .training_config import TrainingConfig
 from .network import ConstellationConfig, LEOConstellation
 from .resources import Allocation, ResourceManager
 from .services import RequestConfig, RequestGenerator, SFCRequest
@@ -25,6 +26,7 @@ class SimulationConfig:
     gat_features: GATFeatureConfig = field(default_factory=GATFeatureConfig)
     gat: GATConfig = field(default_factory=GATConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
+    training: TrainingConfig = field(default_factory=TrainingConfig)
 
     def __post_init__(self):
         if not all(isfinite(x) and x > 0 for x in (self.horizon_s, self.topology_step_s)):
@@ -43,6 +45,7 @@ class SimulationConfig:
         payload["gat_features"] = GATFeatureConfig(**payload.get("gat_features", {}))
         payload["gat"] = GATConfig(**payload.get("gat", {}))
         payload["agent"] = AgentConfig(**payload.get("agent", {}))
+        payload["training"] = TrainingConfig(**payload.get("training", {}))
         return cls(**payload)
 
 

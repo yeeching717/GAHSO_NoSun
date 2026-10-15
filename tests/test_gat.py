@@ -10,7 +10,7 @@ from gahso.gat import EdgeAwareGATLayer, GAHSOGAT
 from gahso.gat_config import GATConfig, GATFeatureConfig
 from gahso.network import ConstellationConfig, LEOConstellation
 from gahso.simulation import SimulationConfig
-from gahso.gat_demo import run_gat_demo
+from helpers import check_gat_gradients
 
 
 def setUpModule():
@@ -26,7 +26,7 @@ def tearDownModule():
 def make_observation():
     env = SFCOrchestrationEnv()
     q = SFCRequest("gat-test", 0, 2, (VNF("a", 50), VNF("b", 150), VNF("c", 75)),
-                   30, 0.1, 0, 30, "compute")
+                   30, 0.1, 0, 30)
     obs, _ = env.reset(request=q)
     return env, obs
 
@@ -35,19 +35,19 @@ class FeatureTests(unittest.TestCase):
     def test_dimensions_values_and_metadata(self):
         _, obs = make_observation()
         graph = GATFeatureBuilder().build(obs)
-        self.assertEqual(tuple(graph.x.shape), (20, 32))
+        self.assertEqual(tuple(graph.x.shape), (25, 25))
         self.assertEqual(tuple(graph.edge_attr.shape), (len(obs["edge_features"]), 2))
         self.assertEqual(tuple(graph.edge_index.shape), (2, len(obs["edge_features"])))
         self.assertEqual(graph.edge_index.dtype, torch.long)
         self.assertEqual(graph.action_mask.dtype, torch.bool)
         self.assertEqual(graph.x.dtype, torch.float32)
-        self.assertEqual(len(graph.node_feature_names), 32)
-        self.assertEqual(tuple(graph.request_features.shape), (21,))
+        self.assertEqual(len(graph.node_feature_names), 25)
+        self.assertEqual(tuple(graph.request_features.shape), (15,))
         self.assertAlmostEqual(graph.request_features[0].item(), 30 / 200)
-        self.assertAlmostEqual(graph.request_features[2].item(), 3 / 8)
+        self.assertAlmostEqual(graph.request_features[2].item(), 3 / 5)
         torch.testing.assert_close(graph.request_features[5:8], torch.tensor([0.25, 0.75, 0.375]))
-        torch.testing.assert_close(graph.request_features[13:21], torch.tensor([1., 1., 1., 0., 0., 0., 0., 0.]))
-        torch.testing.assert_close(graph.x[:, 11:], graph.request_features.expand(20, -1))
+        torch.testing.assert_close(graph.request_features[10:15], torch.tensor([1., 1., 1., 0., 0.]))
+        torch.testing.assert_close(graph.x[:, 10:], graph.request_features.expand(25, -1))
 
     def test_absolute_cpu_distinguishes_equal_utilization(self):
         _, obs = make_observation()
@@ -85,10 +85,10 @@ class FeatureTests(unittest.TestCase):
     def test_padding_limit_rejects_instead_of_truncating(self):
         _, obs = make_observation()
         obs["request"]["vnfs"] = tuple({"name": str(i), "cpu": 50} for i in range(9))
-        with self.assertRaisesRegex(ValueError, "increase max_vnfs"):
+        with self.assertRaisesRegex(ValueError, "VNF count"):
             GATFeatureBuilder().build(obs)
-        graph = GATFeatureBuilder(GATFeatureConfig(max_vnfs=9)).build(obs)
-        self.assertEqual(graph.x.shape[1], 34)
+        with self.assertRaises(ValueError):
+            GATFeatureConfig(max_vnfs=9)
 
     def test_idle_and_edgeless_state_shapes(self):
         env = SFCOrchestrationEnv()
@@ -132,7 +132,7 @@ class FeatureTests(unittest.TestCase):
             ("edge_features", ()),
             ("node_feature_names", ("wrong",)),
             ("action_mask", (True,) * 19),
-            ("position", (0,) * 20),
+            ("position", (0,) * 25),
             ("path", (0, 0)),
             ("step_count", -1),
         ]
@@ -281,7 +281,7 @@ class EncoderTests(unittest.TestCase):
             torch.manual_seed(7)
             model = GAHSOGAT()
             result, attention = model(graph, return_attention=True)
-            self.assertEqual(tuple(result.shape), (20, 128))
+            self.assertEqual(tuple(result.shape), (25, 128))
             self.assertEqual(len(attention), 2)
             result.square().mean().backward()
         for name, p in model.named_parameters():
@@ -316,13 +316,13 @@ class EncoderTests(unittest.TestCase):
         graph = GATFeatureBuilder(features).build(obs)
         model = GAHSOGAT(features, GATConfig(hidden_dim=8, num_layers=1)).double()
         result = model(graph.to(dtype=torch.float64))
-        self.assertEqual(tuple(result.shape), (20, 8))
+        self.assertEqual(tuple(result.shape), (25, 8))
         with self.assertRaises(ValueError):
-            GAHSOGAT()(graph)
+            GAHSOGAT()(replace(graph, x=graph.x[:, :-1]))
 
-    def test_demo_reports_finite_backward_and_unchanged_resources(self):
-        result = run_gat_demo(SimulationConfig())
-        self.assertEqual(result["output_shape"], [20, 128])
+    def test_fixture_reports_finite_backward_and_unchanged_resources(self):
+        result = check_gat_gradients(SimulationConfig())
+        self.assertEqual(result["output_shape"], [25, 128])
         self.assertFalse(result["trained"])
         self.assertTrue(result["resources_unchanged"])
         self.assertTrue(all(g["finite"] and g["norm"] > 0 for g in result["gradients"].values()))

@@ -27,7 +27,7 @@ class GeometryTests(unittest.TestCase):
 
     def test_paper_defaults_and_four_transceiver_bound(self):
         snap = self.constellation.snapshot(123.0)
-        self.assertEqual(len(snap.satellites), 20)
+        self.assertEqual(len(snap.satellites), 25)
         for n, satellite in snap.satellites.items():
             self.assertAlmostEqual(math.sqrt(sum(x * x for x in satellite.position_km)), 8371.0, places=7)
             self.assertTrue(400 <= satellite.cpu_capacity <= 600)
@@ -73,7 +73,7 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(GroundTerminal(0, 0).nearest_visible(self.constellation.snapshot(0)), 0)
 
     def test_invalid_config_and_time(self):
-        for kwargs in ({"satellites": 101}, {"cpu_min": -1}, {"phase_factor": 4},
+        for kwargs in ({"satellites": 101}, {"cpu_min": -1}, {"phase_factor": 5},
                        {"inclination_deg": float("nan")}, {"planes": 2}):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 ConstellationConfig(**kwargs)
@@ -97,12 +97,12 @@ class WorkloadTests(unittest.TestCase):
             self.assertTrue(3 <= len(q.vnfs) <= 5)
             self.assertTrue(all(50 <= v.cpu <= 200 for v in q.vnfs))
 
-    def test_arrival_rate_and_type_ratio_interpretation(self):
-        cfg = RequestConfig(arrival_rate_per_slot=3, bandwidth_to_compute_ratio=0.5)
+    def test_arrival_rate_and_single_service_distribution(self):
+        cfg = RequestConfig(arrival_rate_per_slot=3)
         workload = RequestGenerator(cfg).generate(10000, 100)
         self.assertTrue(2700 < len(workload) < 3300)
-        fraction = sum(q.service_type == "bandwidth" for q in workload) / len(workload)
-        self.assertAlmostEqual(fraction, 1 / 3, delta=0.04)
+        self.assertTrue(all(not hasattr(q, "service_type") for q in workload))
+        self.assertGreater(max(q.bandwidth_mhz for q in workload), 79)
 
     def test_zero_arrivals(self):
         self.assertEqual(RequestGenerator(RequestConfig(arrival_rate_per_slot=0)).generate(10, 100), [])
@@ -256,7 +256,7 @@ class ResourceTests(unittest.TestCase):
 
 
 class IntegrationTests(unittest.TestCase):
-    def test_demo_policy_produces_a_valid_allocation(self):
+    def test_baseline_policy_produces_a_valid_allocation(self):
         manager = ResourceManager(snapshot())
         q = request()
         plan = shortest_delay_greedy(manager, q)
@@ -278,7 +278,7 @@ class IntegrationTests(unittest.TestCase):
 
     def test_same_time_expiry_precedes_new_admission(self):
         cfg = SimulationConfig(horizon_s=10, topology_step_s=10, drain=True)
-        a = SFCRequest("a", 0, 1, (VNF("s", 400), VNF("d", 400)), 150, 1, 0, 5)
+        a = SFCRequest("a", 0, 1, (VNF("s", 400), VNF("m", 10), VNF("d", 400)), 150, 1, 0, 5)
         b = replace(a, id="b", arrival_s=5)
         report = Simulation(cfg).run([a, b])
         self.assertEqual(report["final"]["accepted"], 2)
@@ -287,10 +287,10 @@ class IntegrationTests(unittest.TestCase):
 
     def test_no_drain_preserves_unexpired_reservations(self):
         cfg = SimulationConfig(horizon_s=1, topology_step_s=1, drain=False)
-        q = SFCRequest("q", 0, 1, (VNF("s", 50), VNF("d", 50)), 20, 1, 0, 100)
+        q = SFCRequest("q", 0, 1, (VNF("s", 50), VNF("m", 50), VNF("d", 50)), 20, 1, 0, 100)
         report = Simulation(cfg).run([q])
         self.assertEqual(report["final"]["statuses"]["active"], 1)
-        self.assertEqual(report["final"]["cpu_reserved"], 100)
+        self.assertEqual(report["final"]["cpu_reserved"], 150)
 
     def test_empty_workload_and_single_use(self):
         sim = Simulation(SimulationConfig(horizon_s=1))

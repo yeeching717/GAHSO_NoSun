@@ -37,7 +37,7 @@ class FixedConstellation:
 
 def request(identifier="q", arrival=0, delay=.1, cpu=100):
     return SFCRequest(identifier, 0, 3, tuple(VNF(str(i), cpu) for i in range(3)),
-                      50, delay, arrival, 10, "compute")
+                      50, delay, arrival, 10)
 
 
 def agent():
@@ -69,7 +69,7 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(self.agent.critic(self.graph).shape, torch.Size([]))
 
     def test_all_masked_actor_rejects_but_critic_works(self):
-        graph = replace(self.graph, action_mask=torch.zeros(4, dtype=torch.bool))
+        graph = replace(self.graph, feasible_action_mask=torch.zeros(4, dtype=torch.bool))
         with self.assertRaises(NoAvailableActionsError):
             self.agent.act(graph)
         self.assertTrue(torch.isfinite(self.agent.critic(graph)))
@@ -117,7 +117,7 @@ class NetworkTests(unittest.TestCase):
         graph = GATFeatureBuilder().build(state)
         model = ActorCriticAgent()
         probs = model.actor.distribution(graph).probs
-        self.assertEqual(probs.shape, (20,))
+        self.assertEqual(probs.shape, (25,))
         self.assertTrue(torch.equal(probs[~graph.action_mask], torch.zeros_like(probs[~graph.action_mask])))
         self.assertAlmostEqual(probs.sum().item(), 1, places=6)
 
@@ -145,7 +145,7 @@ class TDTests(unittest.TestCase):
 
 class RolloutTests(unittest.TestCase):
     def make(self, **kwargs):
-        env = SFCOrchestrationEnv(FixedConstellation(**kwargs))
+        env = SFCOrchestrationEnv(FixedConstellation(**kwargs), MDPConfig(delay_feasibility_mask=False))
         model = agent()
         route_forward(model)
         return env, model, RolloutCollector(env, model)
@@ -232,13 +232,13 @@ class RolloutTests(unittest.TestCase):
         self.assertEqual(env.steps, 0)
         self.assertTrue(torch.isfinite(step.target))
 
-    def test_bandwidth_infeasible_neighbor_is_not_masked(self):
+    def test_bandwidth_infeasible_neighbor_is_masked(self):
         _, _, collector = self.make(capacity=10)
         result = collector.collect(request())
         step = result.transitions[0]
-        self.assertEqual(step.action, 1)
-        self.assertEqual(step.probabilities[1].item(), 1)
-        self.assertEqual(step.info["last_action_reason"], "insufficient_bandwidth")
+        self.assertIsNone(step.action)
+        self.assertIsNone(step.probabilities)
+        self.assertEqual(step.info["reason"], "dead_end")
         self.assertFalse(result.accepted)
 
     def test_invalid_revisit_penalty_then_step_limit(self):
@@ -248,10 +248,9 @@ class RolloutTests(unittest.TestCase):
         with torch.no_grad():
             model.actor.head[-1].bias[0] = 10
         result = RolloutCollector(env, model).collect(request(), deterministic=True)
-        self.assertEqual([t.action for t in result.transitions], [1, 0, 0])
-        self.assertEqual(result.transitions[1].info["reason"], "path_contains_cycle")
-        self.assertEqual(result.transitions[1].reward, -env.config.rewards.alpha1)
-        self.assertEqual(result.transitions[-1].info["reason"], "max_steps")
+        self.assertEqual([t.action for t in result.transitions], [1, 2, 3])
+        self.assertEqual(result.transitions[1].probabilities[0].item(), 0)
+        self.assertTrue(result.accepted)
 
     def test_seeded_sampling_and_no_inference_update(self):
         env1, model1, collector1 = self.make()

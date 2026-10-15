@@ -52,7 +52,7 @@ class _GraphValueBase(nn.Module):
 
 class Actor(_GraphValueBase):
     """輸出每個 node_ids 索引的 logit；非鄰居設為 -inf 後才做 softmax。"""
-    def __init__(self, num_nodes: int = 20, feature_config: GATFeatureConfig | None = None,
+    def __init__(self, num_nodes: int = 25, feature_config: GATFeatureConfig | None = None,
                  gat_config: GATConfig | None = None, config: AgentConfig | None = None):
         super().__init__(num_nodes, num_nodes, feature_config, gat_config, config)
 
@@ -63,7 +63,7 @@ class Actor(_GraphValueBase):
         return logits
 
     def forward(self, graph: GATInputs) -> Tensor:
-        mask = graph.action_mask
+        mask = graph.feasible_action_mask
         if mask.dtype != torch.bool or mask.shape != (self.num_nodes,) or mask.device != graph.x.device:
             raise ValueError("action_mask must be a boolean vector on the graph device")
         if not bool(mask.any()):
@@ -71,13 +71,13 @@ class Actor(_GraphValueBase):
         return self.raw_logits(graph).masked_fill(~mask, -torch.inf)
 
     def distribution(self, graph: GATInputs) -> Categorical:
-        """直接使用 logits 建立穩定分布；不使用更強的 feasible_action_mask。"""
+        """訓練及部署共用可行動作遮罩，排除循環與頻寬不足。"""
         return Categorical(logits=self(graph))
 
 
 class Critic(_GraphValueBase):
     """回傳純量 V(s)，包含 terminal state 也可估值，不依賴動作遮罩。"""
-    def __init__(self, num_nodes: int = 20, feature_config: GATFeatureConfig | None = None,
+    def __init__(self, num_nodes: int = 25, feature_config: GATFeatureConfig | None = None,
                  gat_config: GATConfig | None = None, config: AgentConfig | None = None):
         super().__init__(num_nodes, 1, feature_config, gat_config, config)
 
@@ -127,7 +127,7 @@ class ActionSample:
 
 class ActorCriticAgent(nn.Module):
     """封裝三個獨立網路、動作取樣及 Target 同步計數。"""
-    def __init__(self, num_nodes: int = 20, feature_config: GATFeatureConfig | None = None,
+    def __init__(self, num_nodes: int = 25, feature_config: GATFeatureConfig | None = None,
                  gat_config: GATConfig | None = None, config: AgentConfig | None = None):
         super().__init__()
         self.config = config or AgentConfig()

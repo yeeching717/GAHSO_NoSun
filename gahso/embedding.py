@@ -8,6 +8,9 @@ from .services import SFCRequest
 class EmbeddingResult:
     path: tuple[int, ...]
     placements: tuple[int | None, ...]
+    candidate_counts: tuple[int, ...] = ()
+    failure_reasons: tuple[str | None, ...] = ()
+    endpoint_placement_mode: str = "fixed"
 
     @property
     def unembedded(self) -> int:
@@ -18,7 +21,7 @@ class EmbeddingResult:
     def allocation(self) -> Allocation | None:
         if self.unembedded:
             return None
-        return Allocation(self.path, self.placements)
+        return Allocation(self.path, self.placements, self.endpoint_placement_mode)
 
 
 def embed_vnfs(manager: ResourceManager, request: SFCRequest,
@@ -56,3 +59,60 @@ def embed_vnfs(manager: ResourceManager, request: SFCRequest,
         available[node] -= vnf.cpu
         placements[i] = node
     return EmbeddingResult(path, tuple(placements))
+
+
+def embed_vnfs(manager: ResourceManager, request: SFCRequest, path: tuple[int, ...],
+               endpoint_placement_mode: str = "fixed") -> EmbeddingResult:
+    """Ordered placement with endpoint-mode and per-VNF failure diagnostics."""
+    path = tuple(path)
+    if not path or path[0] != request.source or len(set(path)) != len(path):
+        raise ValueError("Embedding needs a simple path starting at the source")
+    if any(n not in manager.snapshot.satellites for n in path):
+        raise ValueError("Unknown node in embedding path")
+    if endpoint_placement_mode not in ("fixed", "neighbor_allowed"):
+        raise ValueError("Unknown endpoint placement mode")
+    available = {node: manager.cpu_available(node) for node in path}
+    placements = [None] * len(request.vnfs)
+    candidate_counts = [0] * len(request.vnfs)
+    failures = [None] * len(request.vnfs)
+    source_indices = [0]
+    destination_indices = [len(path) - 1] if path[-1] == request.destination else []
+    if endpoint_placement_mode == "neighbor_allowed":
+        if len(path) > 1 and path[1] in manager.snapshot.neighbors(request.source):
+            source_indices.append(1)
+        if (len(path) > 1 and path[-1] == request.destination and
+                path[-2] in manager.snapshot.neighbors(request.destination)):
+            destination_indices.append(len(path) - 2)
+
+    def reserve_endpoint(index, indices, lower=0):
+        choices = [j for j in dict.fromkeys(indices) if j >= lower and
+                   available[path[j]] + EPSILON >= request.vnfs[index].cpu]
+        candidate_counts[index] = len(choices)
+        if not choices:
+            failures[index] = "insufficient_cpu_at_allowed_endpoint"
+            return None
+        chosen = max(choices, key=lambda j: (available[path[j]], -j))
+        available[path[chosen]] -= request.vnfs[index].cpu
+        placements[index] = path[chosen]
+        return chosen
+
+    first_index = reserve_endpoint(0, source_indices)
+    last_index = reserve_endpoint(len(request.vnfs) - 1, destination_indices,
+                                  0 if first_index is None else first_index)
+    lower = 0 if first_index is None else first_index
+    upper = len(path) - 1 if last_index is None else last_index
+    for i, vnf in enumerate(request.vnfs[1:-1], start=1):
+        choices = [j for j in range(lower, upper + 1)
+                   if available[path[j]] + EPSILON >= vnf.cpu]
+        candidate_counts[i] = len(choices)
+        if not choices:
+            failures[i] = "no_ordered_cpu_candidate"
+            break
+        lower = max(choices, key=lambda j: (available[path[j]], -j))
+        available[path[lower]] -= vnf.cpu
+        placements[i] = path[lower]
+    for i, node in enumerate(placements):
+        if node is None and failures[i] is None:
+            failures[i] = "not_attempted_after_previous_failure"
+    return EmbeddingResult(path, tuple(placements), tuple(candidate_counts), tuple(failures),
+                           endpoint_placement_mode)

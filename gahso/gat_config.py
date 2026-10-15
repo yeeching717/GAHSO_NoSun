@@ -6,14 +6,14 @@ from math import isfinite
 @dataclass(frozen=True)
 class GATFeatureConfig:
     """原始特徵編碼的補充假設；超長 VNF 串列明確拒絕，絕不默默截斷。"""
-    max_vnfs: int = 8
+    max_vnfs: int = 5
     cpu_demand_scale: float = 200.0
     bandwidth_demand_scale_mhz: float = 200.0
     delay_scale_s: float = 0.1
 
     def __post_init__(self):
-        if type(self.max_vnfs) is not int or self.max_vnfs < 2:
-            raise ValueError("max_vnfs must be an integer >= 2")
+        if type(self.max_vnfs) is not int or self.max_vnfs != 5:
+            raise ValueError("max_vnfs must be 5 for the single-service feature schema")
         scales = (self.cpu_demand_scale, self.bandwidth_demand_scale_mhz, self.delay_scale_s)
         if not all(isfinite(x) and x > 0 for x in scales):
             raise ValueError("Feature scales must be finite and positive")
@@ -25,8 +25,8 @@ class GATFeatureConfig:
 
     @property
     def node_dim(self) -> int:
-        # 原 MDP 9 維 + 絕對剩餘 CPU 1 維 + 路徑順序 1 維 + 服務需求。
-        return 11 + self.request_dim
+        # MDP 8 維（含延遲下界/可達性）+ CPU 1 維 + 路徑順序 1 維 + 服務需求。
+        return 10 + self.request_dim
 
     @property
     def edge_dim(self) -> int:

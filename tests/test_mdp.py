@@ -8,7 +8,7 @@ from gahso.services import SFCRequest, VNF
 from gahso.mdp import MDPConfig, RewardConfig, SFCOrchestrationEnv
 from gahso.embedding import embed_vnfs
 from gahso.simulation import SimulationConfig
-from gahso.mdp_demo import run_mdp_demo
+from helpers import check_mdp_lifecycle
 
 
 class FixedConstellation:
@@ -27,11 +27,11 @@ class FixedConstellation:
 
 def request(identifier="q", cpu=100, delay=0.1, arrival=0, duration=10):
     return SFCRequest(identifier, 0, 3, tuple(VNF(str(i), cpu) for i in range(3)),
-                      50, delay, arrival, duration, "compute")
+                      50, delay, arrival, duration)
 
 
 def environment(**kwargs):
-    return SFCOrchestrationEnv(FixedConstellation(), MDPConfig(**kwargs))
+    return SFCOrchestrationEnv(FixedConstellation(), MDPConfig(delay_feasibility_mask=False, **kwargs))
 
 
 class FeasibilityTests(unittest.TestCase):
@@ -281,7 +281,7 @@ class MDPTests(unittest.TestCase):
         first, _ = env.reset(seed=42)
         second, _ = env.reset(seed=42)
         self.assertEqual(first, second)
-        self.assertEqual(len(first["node_ids"]), 20)
+        self.assertEqual(len(first["node_ids"]), 25)
 
     def test_observation_does_not_alias_internal_state(self):
         env = environment()
@@ -291,11 +291,11 @@ class MDPTests(unittest.TestCase):
         self.assertEqual(env.request.source, 0)
         self.assertEqual(env.request.vnfs[0].cpu, 100)
 
-    def test_config_and_demo_integration(self):
+    def test_config_and_lifecycle_integration(self):
         cfg = SimulationConfig.from_dict({"mdp": {"max_steps": 25}})
-        self.assertEqual(cfg.constellation.satellites, 20)
-        self.assertEqual(cfg.constellation.planes, 4)
-        report = run_mdp_demo(cfg)
+        self.assertEqual(cfg.constellation.satellites, 25)
+        self.assertEqual(cfg.constellation.planes, 5)
+        report = check_mdp_lifecycle(cfg)
         self.assertTrue(report["trajectory"][-1]["info"]["accepted"])
         self.assertEqual(report["after_expiry"]["cpu_reserved"], 0)
         self.assertEqual(report["after_expiry"]["bandwidth_reserved_mhz"], 0)

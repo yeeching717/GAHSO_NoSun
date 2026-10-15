@@ -5,7 +5,8 @@ from .services import SFCRequest
 from .embedding import embed_vnfs
 
 
-def shortest_delay_greedy(manager: ResourceManager, request: SFCRequest) -> Allocation | None:
+def shortest_delay_greedy(manager: ResourceManager, request: SFCRequest,
+                          endpoint_placement_mode: str = "fixed") -> Allocation | None:
     """先找頻寬足夠的最短延遲路徑，再呼叫與 MDP 共用的 VNF 放置器。"""
     if request.source not in manager.snapshot.satellites or request.destination not in manager.snapshot.satellites:
         return None
@@ -34,4 +35,4 @@ def shortest_delay_greedy(manager: ResourceManager, request: SFCRequest) -> Allo
         path.append(previous[path[-1]])
     path.reverse()
     # 放置器只使用暫存 CPU；正式配置由 ResourceManager.admit() 執行。
-    return embed_vnfs(manager, request, tuple(path)).allocation
+    return embed_vnfs(manager, request, tuple(path), endpoint_placement_mode).allocation

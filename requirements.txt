@@ -1,0 +1,5 @@
+# Formal training, evaluation and deployment; Windows CPU, Python 3.14.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.0+cpu
+numpy==2.5.3
+matplotlib==3.11.2

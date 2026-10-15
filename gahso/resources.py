@@ -1,6 +1,6 @@
 """論文公式 (4)–(13)：負載、公平性、C1–C8 檢查與原子資源帳本。"""
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from math import isfinite
 from typing import Iterable
@@ -24,12 +24,15 @@ class Allocation:
     """path 為簡單實體路徑；vnf_nodes[i] 為第 i 個 VNF 所在衛星。"""
     path: tuple[int, ...]
     vnf_nodes: tuple[int, ...]
+    endpoint_placement_mode: str = "fixed"
 
     def __post_init__(self):
         object.__setattr__(self, "path", tuple(self.path))
         object.__setattr__(self, "vnf_nodes", tuple(self.vnf_nodes))
         if any(type(n) is not int for n in self.path + self.vnf_nodes):
             raise ValueError("Allocation node IDs must be integers")
+        if self.endpoint_placement_mode not in ("fixed", "neighbor_allowed"):
+            raise ValueError("Unknown endpoint placement mode")
 
 
 @dataclass(frozen=True)
@@ -101,6 +104,21 @@ class ResourceManager:
         self._bandwidth_used: Counter[Edge] = Counter()
         self.events: list[dict] = []
 
+    def planning_copy(self, release_request_id: str | None = None):
+        """候選搜索使用獨立帳本；可只在副本歸還待遷移服務自己的資源。"""
+        other = ResourceManager(self.snapshot, self.cpu_weight, self.bandwidth_weight)
+        other.records = {key: replace(record) for key, record in self.records.items()}
+        other._cpu_used = self._cpu_used.copy()
+        other._bandwidth_used = self._bandwidth_used.copy()
+        if release_request_id is not None:
+            record = other.records.get(release_request_id)
+            if record is None or record.status not in (ServiceStatus.ACTIVE, ServiceStatus.INTERRUPTED):
+                raise ValueError("Only a reserved service can receive migration credit")
+            other._apply(record.request, record.allocation, -1)
+            del other.records[release_request_id]
+        other.assert_invariants()
+        return other
+
     @property
     def time_s(self):
         return self.snapshot.time_s
@@ -154,8 +172,14 @@ class ResourceManager:
         add("SIMPLE_PATH", simple, "path_contains_cycle")
         add("NODES", known, "unknown_satellite")
         add("C3", len(placements) == len(request.vnfs), "vnf_count_mismatch")
-        add("C1", bool(placements) and placements[0] == request.source, "invalid_vnf_endpoints")
-        add("C2", bool(placements) and placements[-1] == request.destination, "invalid_vnf_endpoints")
+        if allocation.endpoint_placement_mode == "fixed":
+            first_ok = bool(placements) and placements[0] == request.source
+            last_ok = bool(placements) and placements[-1] == request.destination
+        else:
+            first_ok = bool(placements) and placements[0] in ({request.source} | set(self.snapshot.neighbors(request.source)))
+            last_ok = bool(placements) and placements[-1] in ({request.destination} | set(self.snapshot.neighbors(request.destination)))
+        add("C1", first_ok, "invalid_vnf_endpoints")
+        add("C2", last_ok, "invalid_vnf_endpoints")
         indices = {node: i for i, node in enumerate(path)}
         on_path = all(n in indices for n in placements)
         positions = [indices[n] for n in placements] if on_path else []

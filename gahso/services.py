@@ -26,12 +26,11 @@ class SFCRequest:
     max_delay_s: float
     arrival_s: float
     duration_s: float
-    service_type: str = "custom"
 
     def __post_init__(self):
         object.__setattr__(self, "vnfs", tuple(self.vnfs))
-        if not self.id or len(self.vnfs) < 2 or not all(isinstance(v, VNF) for v in self.vnfs):
-            raise ValueError("Request needs an ID and at least source/destination VNFs")
+        if not self.id or not 3 <= len(self.vnfs) <= 5 or not all(isinstance(v, VNF) for v in self.vnfs):
+            raise ValueError("Request requires 3 to 5 VNFs, including both endpoints")
         if type(self.source) is not int or type(self.destination) is not int or min(self.source, self.destination) < 0:
             raise ValueError("Endpoints must be nonnegative integer node IDs")
         if not all(isfinite(x) and x > 0 for x in (self.bandwidth_mhz, self.max_delay_s, self.duration_s)):
@@ -47,11 +46,10 @@ class SFCRequest:
 
 @dataclass(frozen=True)
 class RequestConfig:
-    """流量參數；頻寬型／計算型比值 0.5 對應頻寬型機率 1/3。"""
+    """單一服務分布：CPU 與頻寬分別在共同範圍獨立均勻抽樣。"""
     arrival_rate_per_slot: float = 3.0
     slot_duration_s: float = 10.0
     mean_duration_s: float = 120.0
-    bandwidth_to_compute_ratio: float = 0.5
     vnf_count_min: int = 3
     vnf_count_max: int = 5
     cpu_min: float = 50.0
@@ -68,11 +66,9 @@ class RequestConfig:
             raise ValueError("Request configuration must be finite and positive")
         if not isfinite(self.arrival_rate_per_slot) or self.arrival_rate_per_slot < 0:
             raise ValueError("Arrival rate must be finite and nonnegative")
-        if not isfinite(self.bandwidth_to_compute_ratio) or self.bandwidth_to_compute_ratio < 0:
-            raise ValueError("Service ratio must be finite and nonnegative")
         if (type(self.vnf_count_min) is not int or type(self.vnf_count_max) is not int
-                or not 2 <= self.vnf_count_min <= self.vnf_count_max):
-            raise ValueError("Require 2 <= vnf_count_min <= vnf_count_max")
+                or not 3 <= self.vnf_count_min <= self.vnf_count_max <= 5):
+            raise ValueError("Require 3 <= vnf_count_min <= vnf_count_max <= 5")
         if self.cpu_min > self.cpu_max or self.bandwidth_min_mhz > self.bandwidth_max_mhz:
             raise ValueError("Invalid demand ranges")
 
@@ -90,24 +86,19 @@ class RequestGenerator:
         if cfg.arrival_rate_per_slot == 0:
             return []
         rate_per_second = cfg.arrival_rate_per_slot / cfg.slot_duration_s
-        p_bandwidth = cfg.bandwidth_to_compute_ratio / (1 + cfg.bandwidth_to_compute_ratio)
         requests, time_s = [], 0.0
-        cpu_mid = (cfg.cpu_min + cfg.cpu_max) / 2
-        bw_mid = (cfg.bandwidth_min_mhz + cfg.bandwidth_max_mhz) / 2
         while True:
             time_s += rng.expovariate(rate_per_second)
             if time_s >= horizon_s:
                 break
-            is_bandwidth = rng.random() < p_bandwidth
-            service_type = "bandwidth" if is_bandwidth else "compute"
-            # 補充假設：將 Table I 的需求區間從中點分割為兩類服務。
-            cpu_range = (cfg.cpu_min, cpu_mid) if is_bandwidth else (cpu_mid, cfg.cpu_max)
-            bw_range = (bw_mid, cfg.bandwidth_max_mhz) if is_bandwidth else (cfg.bandwidth_min_mhz, bw_mid)
+            # 工程假設：所有請求共用完整需求區間，不再依服務類型切分。
+            cpu_range = (cfg.cpu_min, cfg.cpu_max)
+            bw_range = (cfg.bandwidth_min_mhz, cfg.bandwidth_max_mhz)
             source, destination = rng.sample(range(satellite_count), 2)
             vnfs = tuple(VNF(f"vnf-{i}", rng.uniform(*cpu_range))
                          for i in range(rng.randint(cfg.vnf_count_min, cfg.vnf_count_max)))
             requests.append(SFCRequest(
                 f"sfc-{len(requests):06d}", source, destination, vnfs, rng.uniform(*bw_range),
-                cfg.max_delay_s, time_s, max(1e-9, rng.expovariate(1 / cfg.mean_duration_s)), service_type,
+                cfg.max_delay_s, time_s, max(1e-9, rng.expovariate(1 / cfg.mean_duration_s)),
             ))
         return requests

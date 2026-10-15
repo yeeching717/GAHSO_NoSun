@@ -5,10 +5,10 @@
   "cpu_load_weight": 1,
   "bandwidth_load_weight": 1,
   "constellation": {
-    "satellites": 20,
-    "planes": 4,
+    "satellites": 25,
+    "planes": 5,
     "altitude_km": 2000,
-    "inclination_deg": 90,
+    "inclination_deg": 85,
     "phase_factor": 0,
     "cpu_min": 400,
     "cpu_max": 600,
@@ -24,7 +24,6 @@
     "arrival_rate_per_slot": 3,
     "slot_duration_s": 10,
     "mean_duration_s": 120,
-    "bandwidth_to_compute_ratio": 0.5,
     "vnf_count_min": 3,
     "vnf_count_max": 5,
     "cpu_min": 50,
@@ -36,24 +35,27 @@
   },
   "mdp": {
     "max_steps": 25,
+    "delay_feasibility_mask": true,
+    "endpoint_placement_mode": "fixed",
     "load_scale": 1000,
     "delay_scale_s": 0.1,
     "rewards": {
-      "theta1": 1000,
-      "theta2": 1,
-      "theta3": 0.01,
-      "theta4": 1000,
+      "mode": "normalized",
+      "theta1": 1,
+      "theta2": 0.1,
+      "theta3": 0.1,
+      "theta4": 1,
       "theta5": 1,
       "theta6": 1,
-      "alpha1": 10,
-      "alpha2": 20,
-      "beta0": 20,
-      "beta1": 5,
-      "gamma1": 1
+      "alpha1": 1,
+      "alpha2": 5,
+      "beta0": 5,
+      "beta1": 1,
+      "gamma1": 0.25
     }
   },
   "gat_features": {
-    "max_vnfs": 8,
+    "max_vnfs": 5,
     "cpu_demand_scale": 200,
     "bandwidth_demand_scale_mhz": 200,
     "delay_scale_s": 0.1
@@ -70,5 +72,14 @@
     "hidden_dim2": 64,
     "discount": 0.9999,
     "target_sync_interval": 10
+  },
+  "training": {
+    "actor_lr": 0.0001,
+    "critic_lr": 0.0001,
+    "entropy_coefficient": 0.01,
+    "max_grad_norm": 5,
+    "reward_scale": 5,
+    "advantage_epsilon": 0.000001,
+    "update_requests_per_batch": 8
   }
 }
